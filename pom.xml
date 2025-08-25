@@ -1,0 +1,104 @@
+@Library('team-shared-lib') _
+pipeline {
+  agent { label 'docker' } 
+  tools {
+    jdk   'JDK17'
+    maven 'Maven3'
+  }
+  options {
+    timestamps()
+    ansiColor('xterm')
+    skipDefaultCheckout(true)
+  }
+  parameters {
+    choice(name: 'ENV', choices: ['dev', 'staging', 'prod'], description: 'Target environment')
+    string(name: 'REGISTRY',    defaultValue: 'docker.io',            description: 'Docker registry host')
+    string(name: 'DOCKER_REPO', defaultValue: 'youruser/yourapp',     description: 'Repository path e.g. user/app')
+    string(name: 'IMAGE_TAG',   defaultValue: '',                     description: 'Optional; empty => <branch>-<build_number>')
+    booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip unit tests when building the jar?')
+    string(name: 'REPLICAS', defaultValue: '3', description: 'Demo for sharedlib bounds() (1..5)')
+  }
+
+  stages {
+    stage('Init & Checkout') {
+      steps {
+        checkout scm
+        stash name: 'src', includes: '**/*', useDefaultExcludes: false
+        script {
+          env.BRANCH_SLUG = sh(returnStdout: true, script: "echo \"${env.BRANCH_NAME ?: 'main'}\" | tr '/' '-'").trim()
+          env.EFFECTIVE_TAG = (params.IMAGE_TAG?.trim()) ? params.IMAGE_TAG.trim()
+                               : "${env.BRANCH_SLUG}-${env.BUILD_NUMBER}"
+          env.REPLICAS_BOUNDED = bounds(value: params.REPLICAS as int, min: 1, max: 5) as String
+
+          echo "ENV           : ${params.ENV}"
+          echo "IMAGE TAG     : ${env.EFFECTIVE_TAG}"
+          echo "Replicas (raw): ${params.REPLICAS} -> bounded: ${env.REPLICAS_BOUNDED}"
+        }
+      }
+    }
+
+    stage('Quality (parallel)') {
+      parallel {
+        stage('Compile only') {
+          steps {
+            dir('compile') {
+              unstash 'src'
+              sh 'mvn -B -DskipTests=true clean compile'
+            }
+          }
+        }
+        stage('Unit tests') {
+          steps {
+            dir('tests') {
+              unstash 'src'
+              sh 'mvn -B -DskipTests=false test'
+              junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
+            }
+          }
+        }
+      }
+    }
+
+    stage('Build JAR') {
+      steps {
+        sh "mvn -B -DskipTests=${params.SKIP_TESTS} clean package"
+        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+      }
+    }
+
+    stage('Build Docker image') {
+      steps {
+        sh """
+          docker build \
+            --build-arg APP_ENV=${params.ENV} \
+            -t ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG} .
+        """
+      }
+    }
+
+    stage('Docker login') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                                          usernameVariable: 'DOCKER_USER',
+                                          passwordVariable: 'DOCKER_PASS')]) {
+          sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin ${params.REGISTRY}'
+        }
+      }
+    }
+
+    stage('Push Docker image') {
+      steps {
+        sh "docker push ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG}"
+      }
+    }
+  }
+
+  post {
+    always {
+      sh 'docker logout ${params.REGISTRY} || true'
+      sh 'docker image prune -f || true'
+      sh "docker rmi ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG} || true"
+      cleanWs()
+    }
+  }
+}
