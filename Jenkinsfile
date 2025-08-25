@@ -8,7 +8,7 @@ pipeline {
         PATH = "${env.MAVEN_HOME}\\bin;${env.PATH}"
         MAVEN_REPO_LOCAL = "C:\\Users\\HP\\.m2\\repository"
         DOCKER_IMAGE = "mohamedemad0o/mohamedemad_java-app"
-        DOCKER_CREDENTIALS_ID = "docker-hub-creds"
+        DOCKER_CREDENTIALS_ID = "docker-hub-token"  // الاسم اللي انت عملت بيه credential في Jenkins
     }
     stages {
         stage('Unit tests') {
@@ -33,14 +33,16 @@ pipeline {
 
         stage('Build Docker image') {
             steps {
-                bat "docker build -t ${DOCKER_IMAGE}:main ."
+                dir('C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\java-app-pipeline_main') {
+                    bat "docker build -t ${DOCKER_IMAGE}:main ."
+                }
             }
         }
 
         stage('Docker login') {
             steps {
-                withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    bat "echo %DOCKER_PASS% | docker login -u %DOCKER_USER% --password-stdin"
+                withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_TOKEN')]) {
+                    bat "echo %DOCKER_TOKEN% | docker login -u %DOCKER_USER% --password-stdin"
                 }
             }
         }
