@@ -1,5 +1,8 @@
 pipeline {
     agent any
+    tools {
+        jdk 'jdk-17' 
+    }
     environment {
         MAVEN_HOME = "F:\\ITI\\CI-CD\\day2\\apache-maven-3.9.11"
         PATH = "${env.MAVEN_HOME}\\bin;${env.PATH}"
@@ -8,7 +11,6 @@ pipeline {
         DOCKER_CREDENTIALS_ID = "docker-hub-creds"
     }
     stages {
-
         stage('Unit tests') {
             parallel {
                 stage('Test with Maven') {
@@ -52,11 +54,8 @@ pipeline {
 
     post {
         always {
-            // Logout Docker
             bat "docker logout || exit 0"
-            // Clean Docker images
             bat "docker image prune -f || exit 0"
-            // Clean workspace
             cleanWs()
         }
         success {
