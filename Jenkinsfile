@@ -1,25 +1,23 @@
 @Library('team-shared-lib') _
 
 pipeline {
-    agent { label 'docker' } 
+    agent any   
 
     tools {
-    jdk   'jdk-17.0.16'
-    maven 'Maven-3.9.11'
+        jdk   'jdk-17.0.16'    
+        maven 'Maven-3.9.11'
     }
-
 
     options {
         timestamps()
-        ansiColor('xterm')
         skipDefaultCheckout(true)
     }
 
     parameters {
         choice(name: 'ENV', choices: ['dev', 'staging', 'prod'], description: 'Target environment')
-        string(name: 'REGISTRY',    defaultValue: 'docker.io',        description: 'Docker registry host')
+        string(name: 'REGISTRY', defaultValue: 'docker.io', description: 'Docker registry host')
         string(name: 'DOCKER_REPO', defaultValue: 'mohamedemad_java-app', description: 'Docker repository path')
-        string(name: 'IMAGE_TAG',   defaultValue: '', description: 'Optional; empty => <branch>-<build_number>')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Optional; empty => <branch>-<build_number>')
         booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip unit tests?')
         string(name: 'REPLICAS', defaultValue: '3', description: 'Demo for sharedlib bounds() (1..5)')
     }
@@ -74,7 +72,7 @@ pipeline {
         stage('Build Docker image') {
             steps {
                 bat """
-                  docker build --build-arg APP_ENV=%ENV% -t %REGISTRY%/%DOCKER_REPO%:%EFFECTIVE_TAG% .
+                  docker build --build-arg APP_ENV=${params.ENV} -t ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG} .
                 """
             }
         }
@@ -84,23 +82,25 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                                                   usernameVariable: 'DOCKER_USER',
                                                   passwordVariable: 'DOCKER_PASS')]) {
-                    bat 'docker login -u %DOCKER_USER% -p %DOCKER_PASS% %REGISTRY%'
+                    bat """
+                      docker login -u ${env.DOCKER_USER} -p ${env.DOCKER_PASS} ${params.REGISTRY}
+                    """
                 }
             }
         }
 
         stage('Push Docker image') {
             steps {
-                bat "docker push %REGISTRY%/%mohamedemad_java-app%:%EFFECTIVE_TAG%"
+                bat "docker push ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG}"
             }
         }
     }
 
     post {
         always {
-            bat "docker logout %REGISTRY% || exit 0"
+            bat "docker logout ${params.REGISTRY} || exit 0"
             bat "docker image prune -f || exit 0"
-            bat "docker rmi %REGISTRY%/%DOCKER_REPO%:%EFFECTIVE_TAG% || exit 0"
+            bat "docker rmi ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG} || exit 0"
             cleanWs()
         }
     }
