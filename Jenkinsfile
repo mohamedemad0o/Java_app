@@ -1,61 +1,20 @@
-@Library('team-shared-lib') _
-
 pipeline {
-    agent any   
-
-    tools {
-        jdk   'jdk-17.0.16'    
-        maven 'Maven-3.9.11'
+    agent any
+    environment {
+        MAVEN_HOME = "F:\\ITI\\CI-CD\\day2\\apache-maven-3.9.11"
+        PATH = "${env.MAVEN_HOME}\\bin;${env.PATH}"
+        MAVEN_REPO_LOCAL = "C:\\Users\\HP\\.m2\\repository"
+        DOCKER_IMAGE = "mohamedemad0o/mohamedemad_java-app"
+        DOCKER_CREDENTIALS_ID = "docker-hub-creds"
     }
-
-    options {
-        timestamps()
-        skipDefaultCheckout(true)
-    }
-
-    parameters {
-        choice(name: 'ENV', choices: ['dev', 'staging', 'prod'], description: 'Target environment')
-        string(name: 'REGISTRY', defaultValue: 'docker.io', description: 'Docker registry host')
-        string(name: 'DOCKER_REPO', defaultValue: 'mohamedemad_java-app', description: 'Docker repository path')
-        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Optional; empty => <branch>-<build_number>')
-        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip unit tests?')
-        string(name: 'REPLICAS', defaultValue: '3', description: 'Demo for sharedlib bounds() (1..5)')
-    }
-
     stages {
 
-        stage('Init & Checkout') {
-            steps {
-                checkout scm
-                stash name: 'src', includes: '**/*', useDefaultExcludes: false
-                script {
-                    env.BRANCH_SLUG = env.BRANCH_NAME?.replaceAll('/', '-') ?: 'main'
-                    env.EFFECTIVE_TAG = params.IMAGE_TAG?.trim() ?: "${env.BRANCH_SLUG}-${env.BUILD_NUMBER}"
-                    env.REPLICAS_BOUNDED = bounds(value: params.REPLICAS as int, min: 1, max: 5) as String
-
-                    echo "ENV           : ${params.ENV}"
-                    echo "IMAGE TAG     : ${env.EFFECTIVE_TAG}"
-                    echo "Replicas (raw): ${params.REPLICAS} -> bounded: ${env.REPLICAS_BOUNDED}"
-                }
-            }
-        }
-
-        stage('Quality (parallel)') {
+        stage('Unit tests') {
             parallel {
-                stage('Compile only') {
+                stage('Test with Maven') {
                     steps {
-                        dir('compile') {
-                            unstash 'src'
-                            bat 'mvn -B -DskipTests=true clean compile'
-                        }
-                    }
-                }
-                stage('Unit tests') {
-                    steps {
-                        dir('tests') {
-                            unstash 'src'
-                            bat 'mvn -B -DskipTests=false test'
-                            junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
+                        dir('C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\java-app-pipeline_main') {
+                            bat "${MAVEN_HOME}\\bin\\mvn clean test -Dmaven.repo.local=${MAVEN_REPO_LOCAL}"
                         }
                     }
                 }
@@ -64,44 +23,47 @@ pipeline {
 
         stage('Build JAR') {
             steps {
-                bat "mvn -B -DskipTests=${params.SKIP_TESTS} clean package"
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                dir('C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\java-app-pipeline_main') {
+                    bat "${MAVEN_HOME}\\bin\\mvn clean package -Dmaven.repo.local=${MAVEN_REPO_LOCAL}"
+                }
             }
         }
 
         stage('Build Docker image') {
             steps {
-                bat """
-                  docker build --build-arg APP_ENV=${params.ENV} -t ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG} .
-                """
+                bat "docker build -t ${DOCKER_IMAGE}:main ."
             }
         }
 
         stage('Docker login') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                                                  usernameVariable: 'DOCKER_USER',
-                                                  passwordVariable: 'DOCKER_PASS')]) {
-                    bat """
-                      docker login -u ${env.DOCKER_USER} -p ${env.DOCKER_PASS} ${params.REGISTRY}
-                    """
+                withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
                 }
             }
         }
 
         stage('Push Docker image') {
             steps {
-                bat "docker push ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG}"
+                bat "docker push ${DOCKER_IMAGE}:main"
             }
         }
     }
 
     post {
         always {
-            bat "docker logout ${params.REGISTRY} || exit 0"
+            // Logout Docker
+            bat "docker logout || exit 0"
+            // Clean Docker images
             bat "docker image prune -f || exit 0"
-            bat "docker rmi ${params.REGISTRY}/${params.DOCKER_REPO}:${env.EFFECTIVE_TAG} || exit 0"
+            // Clean workspace
             cleanWs()
+        }
+        success {
+            echo "Pipeline completed successfully!"
+        }
+        failure {
+            echo "Pipeline failed. Check the logs above."
         }
     }
 }
